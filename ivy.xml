@@ -30,6 +30,7 @@
     <conf name="master" description="contains the artifact but no dependencies"/>
     <conf name="default" extends="master,runtime"/>
     <conf name="runtime" extends="compile,test" description="runtime but not the artifact" />
+    
     <!--Private configurations. -->
     <conf name="compile" extends="hadoop${hadoopversion},hbase${hbaseversion}" visibility="private" description="compile artifacts"/>
     <conf name="test" extends="compile" visibility="private"/>

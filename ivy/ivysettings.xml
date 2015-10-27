@@ -32,6 +32,8 @@
   <property name="repo.maven.org" value="${mvnrepo}" override="true"/>
   <property name="repo.jboss.org" value="http://repository.jboss.com/nexus/content/groups/public/" override="false"/>
   <property name="repo.apache.snapshots" value="http://repository.apache.org/content/groups/snapshots-group/" override="false"/>
+  <property name="repo.comscore.com" value="http://csmaven/artifactory/ext-release-local/" override="false"/>
+  <property name="repo.comscore.com.snapshots" value="http://csmaven/artifactory/ext-snapshot-local/" override="false"/>
   <property name="repo.dir" value="${user.home}/.m2/repository" override="false"/>
   <property name="maven2.pattern" value="[organisation]/[module]/[revision]/[module]-[revision](-[classifier])"/>
   <property name="maven2.pattern.ext" value="${maven2.pattern}.[ext]"/>
@@ -44,8 +46,9 @@
   <resolvers>
     <ibiblio name="maven2" root="${repo.maven.org}" pattern="${maven2.pattern.ext}" m2compatible="true"/>
     <ibiblio name="jboss-maven2" root="${repo.jboss.org}" pattern="${maven2.pattern.ext}" m2compatible="true"/>
-    <ibiblio name="apache-snapshots" root="${repo.apache.snapshots}" pattern="${snapshot.pattern}"
-         checkmodified="true" changingPattern=".*SNAPSHOT" m2compatible="true"/>
+    <ibiblio name="comscore-maven2" root="${repo.comscore.com}" pattern="${maven2.pattern.ext}" m2compatible="true"/>
+    <ibiblio name="comscore-snapshots" root="${repo.comscore.com.snapshots}" pattern="${snapshot.pattern}" checkmodified="true" changingPattern=".*SNAPSHOT" m2compatible="true"/>
+    <ibiblio name="apache-snapshots" root="${repo.apache.snapshots}" pattern="${snapshot.pattern}" checkmodified="true" changingPattern=".*SNAPSHOT" m2compatible="true"/>
     <filesystem name="fs" m2compatible="true" checkconsistency="false" force="${force-resolve}"
          checkmodified="true" changingPattern=".*SNAPSHOT">
       <artifact pattern="${repo.dir}/${maven2.pattern.ext}"/>
@@ -58,6 +61,8 @@
       <resolver ref="maven2"/>
       <resolver ref="jboss-maven2"/>
       <resolver ref="apache-snapshots"/>
+      <resolver ref="comscore-maven2"/>
+      <resolver ref="comscore-snapshots"/>
     </chain>
     <chain name="default" dual="true" checkmodified="true">
       <resolver ref="internal"/>

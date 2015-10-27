@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -791,6 +792,29 @@ public class FileLocalizer {
             return new FetchFileRet[0];
         }
         URI uri = path.toUri();
+        
+        // [plin@comscore.com] add additional logic here to support windows UNC path support
+        if (filePath.startsWith("\\\\")) {
+          log.info("UNC Path detected, will copy the file from remote to local temp folder and delete on exit.");
+          
+          // fetch from remote:
+          File srcFile = new File(filePath);
+          File destFile = new File(localTempDir, srcFile.getName());
+          destFile.deleteOnExit();
+          
+          log.info("Local temp file path:" + destFile.getAbsolutePath());
+          
+          try {
+              // copy remote file to local first
+              FileUtils.copyFile(srcFile, destFile);
+              
+              // reset the filePath to the new Path
+              path = new Path(destFile.getAbsolutePath());
+          } catch (IOException e) {
+              throw new ExecException("Could not copy " + filePath + " to local destination " + destFile, 101, PigException.INPUT, e);
+          }
+        }
+        
         Configuration conf = new Configuration();
         ConfigurationUtil.mergeConf(conf, ConfigurationUtil.toConfiguration(properties));
 

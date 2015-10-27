@@ -20,7 +20,6 @@ package org.apache.pig.impl.util.avro;
 
 import static org.apache.avro.file.DataFileConstants.DEFAULT_SYNC_INTERVAL;
 import static org.apache.avro.file.DataFileConstants.DEFLATE_CODEC;
-import static org.apache.avro.mapred.AvroOutputFormat.DEFAULT_DEFLATE_LEVEL;
 import static org.apache.avro.mapred.AvroOutputFormat.DEFLATE_LEVEL_KEY;
 import static org.apache.avro.mapred.AvroOutputFormat.SYNC_INTERVAL_KEY;
 
@@ -72,8 +71,7 @@ public class AvroRecordWriter extends RecordWriter<NullWritable, Object> {
   static void configureDataFileWriter(DataFileWriter<GenericData.Record> writer,
       JobConf job) throws UnsupportedEncodingException {
     if (FileOutputFormat.getCompressOutput(job)) {
-      int level = job.getInt(DEFLATE_LEVEL_KEY,
-          DEFAULT_DEFLATE_LEVEL);
+      int level = job.getInt(DEFLATE_LEVEL_KEY, 1);
       String codecName = job.get(AvroJob.OUTPUT_CODEC, DEFLATE_CODEC);
       CodecFactory factory = codecName.equals(DEFLATE_CODEC)
         ? CodecFactory.deflateCodec(level)

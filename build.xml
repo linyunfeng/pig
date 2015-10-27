@@ -36,6 +36,7 @@
     <property name="version" value="${pig.version}${pig.version.suffix}" />
     <property name="final.name" value="${name}-${version}" />
     <property name="year" value="2007-2012" />
+    <property name="mapr.version" value="mapr.3.1.1" /> 
 
     <!-- source properties -->
     <property name="lib.dir" value="${basedir}/lib" />
@@ -46,8 +47,8 @@
     <property name="docs.dir" value="${basedir}/src/docs" />
     <property name="legacy.dir" value="${basedir}/legacy" />
 
-
     <!-- build properties -->
+    <property name="custom.lib.dir" location="mapr-lib" />
     <property name="build.dir" value="${basedir}/build" />
     <property name="build.classes" value="${build.dir}/classes" />
     <property name="build.docs" value="${build.dir}/docs" />
@@ -522,6 +523,8 @@
     <target name="genLexer" depends="prepare, init, ivy-compile"
        unless="lexerGrammarProcessed"
        description="generates lexer class from an ANTLR grammar">
+       <echo message="${isWindows}" />
+       <echo message="${src.gen.dir}/${grammar.package.dir} ${src.dir}/${grammar.package.dir}/${grammar.name}Lexer.g" />
        <java classname="org.antlr.Tool"
          classpathref="classpath" fork="true" failonerror="true">
          <arg line="-o ${src.gen.dir}/${grammar.package.dir} ${src.dir}/${grammar.package.dir}/${grammar.name}Lexer.g"/>
@@ -857,6 +860,10 @@
                     </section>
                 </manifest>
                 <zipgroupfileset refid="@{includedJars}" />
+                <zipgroupfileset dir="${custom.lib.dir}">
+                    <include name="${mapr.version}/*.jar" />
+                    <include name="third-party/*.jar" />
+                </zipgroupfileset>
                 <fileset file="${basedir}/src/pig-default.properties" />
                 <fileset file="${basedir}/src/main/jruby/pigudf.rb" />
                 <exclude name="hadoop-site.xml" />

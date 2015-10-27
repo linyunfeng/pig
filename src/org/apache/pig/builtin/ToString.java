@@ -42,6 +42,7 @@ public class ToString extends EvalFunc<String> {
         if (input == null || input.size() < 1 || input.get(0) == null) {
             return null;
         }
+        
         if (input.size() == 1) {
             return DataType.toDateTime(input.get(0)).toString();
         } else if (input.size() == 2) {

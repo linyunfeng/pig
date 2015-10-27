@@ -103,8 +103,13 @@ abstract public class Operator<V extends PlanVisitor> implements Serializable, C
      */
     @Override
     public int hashCode() {
-        return mKey.hashCode();
-    }
+    	if (mKey != null) {
+    		return mKey.hashCode();
+    	} else {
+    		System.out.println("Null mKey detected!");
+    		return 0;
+    	}
+	}
 
     public int compareTo(Operator o) {
         return mKey.compareTo(o.mKey);

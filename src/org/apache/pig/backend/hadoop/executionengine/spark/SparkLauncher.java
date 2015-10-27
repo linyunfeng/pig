@@ -27,6 +27,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -111,6 +112,7 @@ import org.apache.pig.tools.pigstats.PigStats;
 import org.apache.pig.tools.pigstats.spark.SparkPigStats;
 import org.apache.pig.tools.pigstats.spark.SparkStatsUtil;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.SparkConf;
 import org.apache.spark.rdd.RDD;
 import org.apache.spark.scheduler.JobLogger;
 import org.apache.spark.scheduler.StatsReportListener;
@@ -134,22 +136,29 @@ public class SparkLauncher extends Launcher {
     private PigContext pigContext = null;
     private JobConf jobConf = null;
     private String currentDirectoryPath = null;
+    private HashSet<OperatorKey> splitPlans = new HashSet<OperatorKey>();
 
     @Override
     public PigStats launchPig(PhysicalPlan physicalPlan, String grpName,
                               PigContext pigContext) throws Exception {
         if (LOG.isDebugEnabled())
             LOG.debug(physicalPlan);
+        
         this.pigContext = pigContext;
-        initialize();
+        initialize();        
+        
+        // compile the physical Plan to Spark Plan
         SparkOperPlan sparkplan = compile(physicalPlan, pigContext);
+        
         if (LOG.isDebugEnabled())
             explain(sparkplan, System.out, "text", true);
+        
         SparkPigStats sparkStats = (SparkPigStats) pigContext
                 .getExecutionEngine().instantiatePigStats();
+        
         sparkStats.initialize(sparkplan);
         PigStats.start(sparkStats);
-
+        
         startSparkIfNeeded(pigContext);
 
         // Set a unique group id for this query, so we can lookup all Spark job
@@ -168,8 +177,7 @@ public class SparkLauncher extends Launcher {
                 physicalPlan, POStore.class);
         POStore firstStore = stores.getFirst();
         if (firstStore != null) {
-            MapRedUtil.setupStreamingDirsConfSingle(firstStore, pigContext,
-                    jobConf);
+            MapRedUtil.setupStreamingDirsConfSingle(firstStore, pigContext, jobConf);
         }
 
         new ParallelismSetter(sparkplan, jobConf).visit();
@@ -230,7 +238,6 @@ public class SparkLauncher extends Launcher {
                 Boolean.valueOf(pc.getProperties().getProperty(PigConfiguration.PIG_OPT_MULTIQUERY, "true"));
 
         if (LOG.isDebugEnabled()) {
-            System.out.println("before multiquery optimization:");
             explain(plan, System.out, "text", true);
         }
 
@@ -242,7 +249,6 @@ public class SparkLauncher extends Launcher {
         }
 
         if (LOG.isDebugEnabled()) {
-            System.out.println("after multiquery optimization:");
             explain(plan, System.out, "text", true);
         }
     }
@@ -410,16 +416,15 @@ public class SparkLauncher extends Launcher {
     private SparkOperPlan compile(PhysicalPlan physicalPlan,
                                   PigContext pigContext) throws PlanException, IOException,
             VisitorException {
-        SparkCompiler sparkCompiler = new SparkCompiler(physicalPlan,
-                pigContext);
+        SparkCompiler sparkCompiler = new SparkCompiler(physicalPlan, pigContext);
         sparkCompiler.compile();
         SparkOperPlan sparkPlan = sparkCompiler.getSparkPlan();
 
         // optimize key - value handling in package
-        SparkPOPackageAnnotator pkgAnnotator = new SparkPOPackageAnnotator(
-                sparkPlan);
+        SparkPOPackageAnnotator pkgAnnotator = new SparkPOPackageAnnotator(sparkPlan);
         pkgAnnotator.visit();
 
+        // optimize the sparkPlan
         optimize(pigContext, sparkPlan);
         return sparkPlan;
     }
@@ -453,9 +458,42 @@ public class SparkLauncher extends Launcher {
                     throw new PigException("SPARK_HOME is not set");
                 }
             }
-
-            sparkContext = new JavaSparkContext(master, "PigOnSpark", sparkHome,
-                    jars.toArray(new String[jars.size()]));
+            
+            SparkConf conf = new SparkConf();
+            conf.setMaster(master);
+            conf.setSparkHome(sparkHome);
+            conf.setAppName("PigOnSpark-[comScore-Hackathon-2015]");
+            conf.setJars(jars.toArray(new String[jars.size()]));
+            
+            String sparkSerializer = System.getenv("SPARK_SERIALIZER");
+            if (sparkSerializer != null) {
+            	conf.set("spark.serializer", sparkSerializer);
+            } else {
+            	conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer");
+            }
+            
+            // get environment setting from process to see the executor memory limit
+            String executorMemory = System.getenv("SPARK_EXECUTOR_MEMORY");
+            if (executorMemory != null) {
+            	conf.set("spark.executor.memory", executorMemory);
+            }
+           
+            String sparkCoresMax = System.getenv("SPARK_CORES_MAX");
+            if (sparkCoresMax != null) {
+            	conf.set("spark.cores.max", sparkCoresMax);
+            }
+            
+            String sparkUIPort = System.getenv("SPARK_UI_PORT");
+            if (sparkUIPort != null) {
+            	conf.set("spark.ui.port", sparkUIPort);
+            }
+            
+            String sparkEventLog = System.getenv("SPARK_EVENTLOG_ENABLED");
+            if (sparkEventLog != null) {
+            	conf.set("spark.eventLog.enabled", sparkEventLog);
+            }
+            
+            sparkContext = new JavaSparkContext(conf);
             sparkContext.sc().addSparkListener(new StatsReportListener());
             sparkContext.sc().addSparkListener(new JobLogger());
             sparkContext.sc().addSparkListener(jobMetricsListener);
@@ -482,6 +520,7 @@ public class SparkLauncher extends Launcher {
         List<SparkOperator> leaves = sparkPlan.getLeaves();
         Collections.sort(leaves);
         Map<OperatorKey, RDD<Tuple>> sparkOpToRdds = new HashMap();
+        
         if (LOG.isDebugEnabled()) {
             LOG.debug("Converting " + leaves.size() + " Spark Operators to RDDs");
         }
@@ -489,6 +528,10 @@ public class SparkLauncher extends Launcher {
         for (SparkOperator leaf : leaves) {
             new PhyPlanSetter(leaf.physicalPlan).visit();
             Map<OperatorKey, RDD<Tuple>> physicalOpToRdds = new HashMap();
+            
+            LOG.debug("Leaf:" + leaf.name());
+            LOG.debug("Plan: " + sparkPlan.toString());
+            
             sparkOperToRDD(sparkPlan, leaf, sparkOpToRdds,
                     physicalOpToRdds, convertMap, seenJobIDs, sparkStats,
                     jobConf);
@@ -516,10 +559,12 @@ public class SparkLauncher extends Launcher {
                                 Map<Class<? extends PhysicalOperator>, RDDConverter> convertMap,
                                 Set<Integer> seenJobIDs, SparkPigStats sparkStats, JobConf conf)
             throws IOException, InterruptedException {
+    	
         addUDFJarsToSparkJobWorkingDirectory(sparkOperator);
-        List<SparkOperator> predecessors = sparkPlan
-                .getPredecessors(sparkOperator);
+        
+        List<SparkOperator> predecessors = sparkPlan.getPredecessors(sparkOperator);
         List<RDD<Tuple>> predecessorRDDs = Lists.newArrayList();
+        
         if (predecessors != null) {
             for (SparkOperator pred : predecessors) {
                 if (sparkOpRdds.get(pred.getOperatorKey()) == null) {
@@ -527,6 +572,7 @@ public class SparkLauncher extends Launcher {
                             physicalOpRdds, convertMap, seenJobIDs, sparkStats,
                             conf);
                 }
+                
                 predecessorRDDs.add(sparkOpRdds.get(pred.getOperatorKey()));
             }
         }
@@ -534,14 +580,17 @@ public class SparkLauncher extends Launcher {
         List<PhysicalOperator> leafPOs = sparkOperator.physicalPlan.getLeaves();
         boolean isFail = false;
         Exception exception = null;
-        //One SparkOperator may have multiple leaves(POStores) after multiquery feature is enabled
+        
+        // One SparkOperator may have multiple leaves(POStores) after multiquery feature is enabled
         if (LOG.isDebugEnabled()) {
             LOG.debug("sparkOperator.physicalPlan have " + sparkOperator.physicalPlan.getLeaves().size() + " leaves");
         }
+        
         for (PhysicalOperator leafPO : leafPOs) {
             try {
                 physicalToRDD(sparkOperator.physicalPlan, leafPO, physicalOpRdds,
                         predecessorRDDs, convertMap);
+                
                 sparkOpRdds.put(sparkOperator.getOperatorKey(),
                         physicalOpRdds.get(leafPO.getOperatorKey()));
             } catch (Exception e) {
@@ -553,6 +602,7 @@ public class SparkLauncher extends Launcher {
 
         List<POStore> poStores = PlanHelper.getPhysicalOperators(
                 sparkOperator.physicalPlan, POStore.class);
+        
         Collections.sort(poStores);
         if (poStores.size() > 0) {
             int i = 0;
@@ -579,37 +629,45 @@ public class SparkLauncher extends Launcher {
                                Map<Class<? extends PhysicalOperator>, RDDConverter> convertMap)
             throws IOException {
         RDD<Tuple> nextRDD = null;
-        List<PhysicalOperator> predecessors = plan
-                .getPredecessors(physicalOperator);
-        if (predecessors != null && predecessors.size() > 1) {
-            Collections.sort(predecessors);
+        List<PhysicalOperator> predecessors = plan.getPredecessors(physicalOperator);
+        
+        if (predecessors != null && predecessors.size() > 1) {        	 
+        	Collections.sort(predecessors);
         }
 
+        //
+        // We try to build this predecessorRdds
+        //
         List<RDD<Tuple>> predecessorRdds = Lists.newArrayList();
         if (predecessors != null) {
             for (PhysicalOperator predecessor : predecessors) {
-                physicalToRDD(plan, predecessor, rdds, rddsFromPredeSparkOper,
-                        convertMap);
+                physicalToRDD(plan, predecessor, rdds, rddsFromPredeSparkOper, convertMap);
                 predecessorRdds.add(rdds.get(predecessor.getOperatorKey()));
             }
-
         } else {
-            if (rddsFromPredeSparkOper != null
-                    && rddsFromPredeSparkOper.size() > 0) {
-                predecessorRdds.addAll(rddsFromPredeSparkOper);
+            if (rddsFromPredeSparkOper != null && rddsFromPredeSparkOper.size() > 0) {
+                predecessorRdds.addAll(rddsFromPredeSparkOper);                
             }
         }
 
         if (physicalOperator instanceof POSplit) {
-            List<PhysicalPlan> successorPlans = ((POSplit) physicalOperator).getPlans();
-            for (PhysicalPlan successPlan : successorPlans) {
+        	List<PhysicalPlan> successorPlans = ((POSplit) physicalOperator).getPlans();        	
+        	
+        	for (PhysicalPlan successPlan : successorPlans) {
                 List<PhysicalOperator> leavesOfSuccessPlan = successPlan.getLeaves();
                 if (leavesOfSuccessPlan.size() != 1) {
                     LOG.error("the size of leaves of SuccessPlan should be 1");
                     break;
                 }
-                PhysicalOperator leafOfSuccessPlan = leavesOfSuccessPlan.get(0);
-                physicalToRDD(successPlan, leafOfSuccessPlan, rdds, predecessorRdds, convertMap);
+                
+                PhysicalOperator leafOfSuccessPlan = leavesOfSuccessPlan.get(0);    
+                
+        		if (!splitPlans.contains(leafOfSuccessPlan.getOperatorKey())) {
+	                physicalToRDD(successPlan, leafOfSuccessPlan, rdds, predecessorRdds, convertMap);
+	                splitPlans.add(leafOfSuccessPlan.getOperatorKey());
+        		} else {
+        			LOG.debug("WARNING => SUCCESSPLAN ALREADY EXECUTED:" + successPlan.toString());
+        		}
             }
         } else {
             RDDConverter converter = convertMap.get(physicalOperator.getClass());
@@ -621,6 +679,10 @@ public class SparkLauncher extends Launcher {
             LOG.info("Converting operator "
                     + physicalOperator.getClass().getSimpleName() + " "
                     + physicalOperator);
+            
+            //
+            // convert predecessorRdds to nextRDD
+            //            
             nextRDD = converter.convert(predecessorRdds, physicalOperator);
 
             if (nextRDD == null) {
@@ -628,7 +690,7 @@ public class SparkLauncher extends Launcher {
                         "RDD should not be null after PhysicalOperator: "
                                 + physicalOperator);
             }
-
+            
             rdds.put(physicalOperator.getOperatorKey(), nextRDD);
         }
     }
@@ -646,9 +708,11 @@ public class SparkLauncher extends Launcher {
         Map<OperatorKey, SparkOperator> allOperKeys = sparkPlan.getKeys();
         List<OperatorKey> operKeyList = new ArrayList(allOperKeys.keySet());
         Collections.sort(operKeyList);
+        
         for (OperatorKey operatorKey : operKeyList) {
             SparkOperator op = sparkPlan.getOperator(operatorKey);
             ps.print(op.getOperatorKey());
+            
             List<SparkOperator> successors = sparkPlan.getSuccessors(op);
             if (successors != null) {
                 ps.print("->");
@@ -672,14 +736,12 @@ public class SparkLauncher extends Launcher {
     @Override
     public void kill() throws BackendException {
         // TODO Auto-generated method stub
-
     }
 
     @Override
     public void killJob(String jobID, Configuration conf)
             throws BackendException {
         // TODO Auto-generated method stub
-
     }
 
     /**
